@@ -2,7 +2,8 @@ package message
 
 import (
 	"encoding/binary"
-	"errors"
+	// "errors"
+	// "dash/consts"
 )
 
 // Ainda falta implementar o tamanho max para payload
@@ -37,26 +38,20 @@ func (c ControlMessage) Encode() []byte {
 	return bytes
 }
 
-// 
+
 func DecodeControlMessage(bytes []byte) (*ControlMessage, error) {
 
-	//[Tamanho: 4 bytes][Operação: 1 byte][Tópico: 2 bytes] = 7 bytes
-	if len(bytes) < 7 {
-		return nil, errors.New("mensagem de controle incompleta")
-	}
+	// if len(bytes) < consts.HEADERS_SIZE{
+	// 	return nil, errors.New("")
+	// }
 
-	bodySize := binary.BigEndian.Uint32(bytes[0:4])
-
-	if len(bytes) - 4 != int(bodySize) {
-		return nil, errors.New("valor declarado e real de tamanho não são iguais")
-	}
-
-	operation, err := NewOperation(bytes[4])
+	operation, err := NewOperation(bytes[0])
 	if err != nil {
 		return nil, err
 	}
 	
-	topic := binary.BigEndian.Uint16(bytes[5:7])
+	topic := binary.BigEndian.Uint16(bytes[1:3])
+	payload := bytes[3:]
 
-	return NewControlMessage(operation, topic, bytes[7:]), nil
+	return NewControlMessage(operation, topic, payload), nil
 }
