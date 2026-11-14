@@ -2,59 +2,41 @@ package client
 
 import (
 	"net"
+	"sync"
 )
 
-/*
-- Duvidas
-	- Atualizar metadados vai ser tipo observer ?
-	-
-*/
 
-
-// so pra nao aparecer erro
-type broker struct{
+type Broker struct{
 	EnderecoTCP string
 	EnderecoUDP string
 }
 
 type Client struct {
-	Nome string
+	Name string
 	
 	// cache
-	Topicos map[uint16]uint16
-	Brokers map[uint16]broker
-	Inscricoes map[uint16]bool
-	Bootstrap broker
+	Topics map[uint16]uint16
+	Brokers map[uint16]Broker
+	Subscriptions map[uint16]bool
+	bootstrap []Broker
 
-	ConexaoUDP net.UDPConn
-	ConexaoTCP net.Conn
+	udpConn *net.UDPConn
+	tcpConn net.Conn
+
+	mu sync.Mutex
 }
 
-func NewClient(nome string, bootstrap broker) *Client {
+func NewClient(nome string, bootstrap ...Broker, ) *Client {
 	return &Client{
-		Nome: nome,
-		Bootstrap: bootstrap,
-		Topicos: map[uint16]uint16{},
-		Brokers: map[uint16]broker{},
-		Inscricoes: map[uint16]bool{},
+		Name: nome,
+		bootstrap: bootstrap,
+		Topics: map[uint16]uint16{},
+		Brokers: map[uint16]Broker{},
+		Subscriptions: map[uint16]bool{},
 	}
 }
 
-func (c *Client) Conectar() error{
-	conexao, err := net.Dial("tcp", c.Bootstrap.EnderecoTCP)
-	if err != nil {
-		return err
-	}
+func (c *Client) Connect(){
 
-	c.ConexaoTCP = conexao
-
-	return nil
 }
 
-func (c Client) Inscrever() {
-	
-}
-
-func (c Client) Publciar() {
-	
-}
