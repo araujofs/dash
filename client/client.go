@@ -1,11 +1,13 @@
 package client
 
 import (
+	"dash/message"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
-	"dash/message"
 )
 
 
@@ -29,15 +31,17 @@ type Client struct {
 	mu sync.Mutex
 }
 
-func NewClient(nome string, bootstrap ...Broker, ) *Client {
+
+func NewClient(name string, bootstrap ...Broker, ) *Client {
 	return &Client{
-		Name: nome,
+		Name: name,
 		bootstrap: bootstrap,
 		Topics: map[uint16]uint16{},
 		Brokers: map[uint16]Broker{},
 		Subscriptions: map[uint16]bool{},
 	}
 }
+
 
 func (c *Client) Connect() error {
 	for _, broker := range c.bootstrap {
@@ -48,7 +52,6 @@ func (c *Client) Connect() error {
 			continue
 		}
 
-		
 		c.tcpConn = connection
 		return nil
 	}
@@ -58,7 +61,6 @@ func (c *Client) Connect() error {
 
 
 func (c *Client) Close() error{
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -73,7 +75,6 @@ func (c *Client) Close() error{
 
 
 func (c *Client) SendControl(msg *message.ControlMessage) error {
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -91,3 +92,33 @@ func (c *Client) SendControl(msg *message.ControlMessage) error {
 
 	return err
 }
+
+
+func (c *Client) ReadControl() (*message.ControlMessage, error){
+	if c.tcpConn == nil {
+		return nil, errors.New("client not connected")
+	}
+
+	sizeBuf := make([]byte,4)
+
+	_, err := io.ReadFull(c.tcpConn, sizeBuf)
+	if err != nil {
+		return nil,err
+	}
+
+	bodySize := binary.BigEndian.Uint32(sizeBuf)
+
+	if (bodySize > 252 || bodySize < 3 ) {
+		return nil, errors.New("")
+	}
+
+	bodyBuf := make([]byte, bodySize)
+
+	_, err = io.ReadFull(c.tcpConn, bodyBuf)
+	if err != nil {
+		return nil,err
+	}
+
+	return message.DecodeControlMessage(bodyBuf)
+}
+ 
