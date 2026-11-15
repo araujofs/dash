@@ -109,7 +109,7 @@ func (c *Client) ReadControl() (*message.ControlMessage, error){
 	bodySize := binary.BigEndian.Uint32(sizeBuf)
 
 	if (bodySize > 252 || bodySize < 3 ) {
-		return nil, errors.New("")
+		return nil, errors.New("invalid control message body size")
 	}
 
 	bodyBuf := make([]byte, bodySize)
@@ -121,4 +121,114 @@ func (c *Client) ReadControl() (*message.ControlMessage, error){
 
 	return message.DecodeControlMessage(bodyBuf)
 }
- 
+
+
+func (c *Client) Subscribe (topic uint16) error {
+	msg := message.NewControlMessage(message.SUB, topic, []byte(c.Name))
+
+	err := c.SendControl(msg)
+	if err != nil {
+		return err
+	}
+
+	response, err := c.ReadControl()
+	if err != nil {
+		return err
+	}
+
+	if len(response.Payload) > 0 && response.Payload[0] == 0 {
+		c.Subscriptions[topic] = true
+		return nil
+	}
+
+	return errors.New("broker rejected subscription")
+}
+
+
+func (c *Client) Unsubscribe (topic uint16) error {
+	msg := message.NewControlMessage(message.UNSUB, topic, nil)
+
+	err := c.SendControl(msg)
+	if err != nil {
+		return err
+	}
+
+	response, err := c.ReadControl()
+	if err != nil {
+		return err
+	}
+
+	if len(response.Payload) > 0 && response.Payload[0] == 0 {
+		c.Subscriptions[topic] = false
+		return nil
+	}
+
+	return errors.New("broker rejected unsubscription")
+}
+
+
+func (c *Client) CreateTopic(topic uint16) error {
+	msg := message.NewControlMessage(message.ADD, topic, nil)
+
+	err := c.SendControl(msg)
+	if err != nil {
+		return err
+	}
+
+	response, err := c.ReadControl()
+	if err != nil {
+		return err
+	}
+
+	if len(response.Payload) > 0 && response.Payload[0] == 0 {
+		return nil
+	}
+
+	return errors.New("broker rejected topic creation")
+}
+
+
+func (c *Client) DeleteTopic(topic uint16) error {
+	msg := message.NewControlMessage(message.DEL, topic, nil)
+
+	err := c.SendControl(msg)
+	if err != nil {
+		return err
+	}
+
+	response, err := c.ReadControl()
+	if err != nil {
+		return err
+	}
+
+	if len(response.Payload) > 0 && response.Payload[0] == 0 {
+		delete(c.Topics, topic)
+		delete(c.Subscriptions, topic)
+		return nil
+	}
+
+	return errors.New("broker rejected topic deletion")
+}
+
+
+func (c *Client) Ping() error {
+	msg := message.NewControlMessage(message.PING, 0, nil)
+
+	err := c.SendControl(msg)
+	if err != nil {
+		return err
+	}
+
+	response, err := c.ReadControl()
+	if err != nil {
+		return err
+	}
+
+	if len(response.Payload) > 0 && response.Payload[0] == 0 {
+		return nil
+	}
+
+	return errors.New("ping failed: broker rejected or returned error")
+}
+
+
