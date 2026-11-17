@@ -23,10 +23,10 @@
   - [x] Envio e tratamento de resposta de `DEL` (3) para exclusão de tópico
   - [ ] Envio de solicitação de metadados `GET_META` (5) (depende de Protobuf com Arthur)
   - [x] Envio de `PING` (6) / verificação de conexão
-- [ ] **Comunicação UDP do lado do cliente**
-  - [ ] Inicialização da conexão UDP (`udpConn *net.UDPConn`) no cliente
-  - [ ] Funções base de envio de datagramas de dados
-  - [ ] Funções base de escuta de datagramas de dados
+- [x] **Comunicação UDP do lado do cliente**
+  - [x] Inicialização da conexão UDP (`udpConn *net.UDPConn`) no cliente
+  - [x] Funções base de envio de datagramas de dados (`SendData`)
+  - [x] Funções base de escuta de datagramas de dados (`ReadData`)
 
 ---
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"dash/consts"
 )
 
 
@@ -52,6 +53,13 @@ func (c *Client) Connect() error {
 			continue
 		}
 
+		udpConn, err := net.ListenUDP("udp",nil)
+		if err != nil {
+			return  err
+		}
+		c.udpConn = udpConn
+
+
 		c.tcpConn = connection
 		return nil
 	}
@@ -60,17 +68,24 @@ func (c *Client) Connect() error {
 }
 
 
-func (c *Client) Close() error{
+func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	var TcpErr error 
+	var UdpErr error
+
 	if c.tcpConn != nil {
-		err := c.tcpConn.Close()
+		TcpErr = c.tcpConn.Close()
 		c.tcpConn = nil
-		return err
 	}
 
-	return nil
+	if c.udpConn != nil {
+		UdpErr = c.udpConn.Close()
+		c.udpConn = nil
+	}
+
+	return errors.Join(TcpErr, UdpErr)
 }
 
 
@@ -232,3 +247,37 @@ func (c *Client) Ping() error {
 }
 
 
+func (c *Client) SendData(msg *message.DataMessage, addr *net.UDPAddr) error{
+	  if c.udpConn == nil {
+            return errors.New("client udp not initialized")
+        }
+
+        if msg == nil {
+            return errors.New("message cannot be nil")
+        }
+
+        bytes := msg.Encode()
+
+        _, err := c.udpConn.WriteToUDP(bytes, addr)
+        return err
+}
+
+
+func (c *Client) ReadData() (*message.DataMessage, error) {
+	if c.udpConn == nil {
+		return nil, errors.New("client udp not initialized")
+	}
+
+	buf := make([]byte, consts.MAX_DATA_MESSAGE_SIZE)
+
+	n, _, err := c.udpConn.ReadFromUDP(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	if n < consts.HEADERS_SIZE {
+		return nil, errors.New("data message smaller than header size")
+	}
+
+	return message.DecodeDataMessage(buf[:n])
+}
