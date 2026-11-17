@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"dash/consts"
+	"google.golang.org/protobuf/proto"
 )
 
 
@@ -280,4 +281,40 @@ func (c *Client) ReadData() (*message.DataMessage, error) {
 	}
 
 	return message.DecodeDataMessage(buf[:n])
+}
+
+func (c *Client) GetMetadata() error {
+	msg := message.NewControlMessage(message.GET_META, 0, nil)
+
+	if err := c.SendControl(msg); err != nil {
+		return err
+	}
+
+	response, err := c.ReadControl()
+	if err != nil {
+		return err
+	}
+
+	var meta message.ClusterMetadata
+	if err := proto.Unmarshal(response.Payload, &meta); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, b := range meta.GetBrokers() {
+		brokerID := uint16(b.GetId())
+		c.Brokers[brokerID] = Broker{
+			TcpAddr: b.GetTcpAddr(),
+			UdpAddr: b.GetUdpAddr(),
+		}
+
+		for _, t := range b.GetTopics() {
+			topicID := uint16(t.GetId())
+			c.Topics[topicID] = brokerID
+		}
+	}
+
+	return nil
 }

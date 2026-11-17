@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package message;
+
+option go_package = "dash/message";
+
+message TopicMeta {
+  uint32 id = 1;
+  string name = 2;
+}
+
+message BrokerMeta {
+  uint32 id = 1;
+  string tcp_addr = 2;
+  string udp_addr = 3;
+  repeated TopicMeta topics = 4;
+}
+
+message ClusterMetadata {
+  repeated BrokerMeta brokers = 1;
+}

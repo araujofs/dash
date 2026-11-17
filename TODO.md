@@ -21,7 +21,7 @@
   - [x] Envio e tratamento de resposta de `UNSUB` (1)
   - [x] Envio e tratamento de resposta de `ADD` (2) para criação de tópico
   - [x] Envio e tratamento de resposta de `DEL` (3) para exclusão de tópico
-  - [ ] Envio de solicitação de metadados `GET_META` (5) (depende de Protobuf com Arthur)
+  - [x] Envio de solicitação de metadados `GET_META` (5) via Protobuf e atualização de cache
   - [x] Envio de `PING` (6) / verificação de conexão
 - [x] **Comunicação UDP do lado do cliente**
   - [x] Inicialização da conexão UDP (`udpConn *net.UDPConn`) no cliente
