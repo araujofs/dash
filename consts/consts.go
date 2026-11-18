@@ -5,4 +5,5 @@ const (
 	MAX_DATA_MESSAGE_SIZE = 2048
 	HEADERS_SIZE          = 3
 	BUFFER_SIZE           = 50
+	UDP_PORTS             = 3
 )

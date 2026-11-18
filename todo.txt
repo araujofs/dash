@@ -1,0 +1,1 @@
+(A) 2026-11-17 Configurar melhor criação de UDPAddr, dado que precisa passar porta
