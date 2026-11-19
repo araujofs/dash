@@ -27,6 +27,7 @@ type Server struct {
 	ClientSeq    *IDSequence[uint64]
 	UdpConfig    []*UdpInfo
 	mu           sync.RWMutex
+	udpListening bool
 }
 
 // NewServer creates a server with a nonzero ID that must be unique in the cluster.
@@ -137,6 +138,13 @@ func (s *Server) RemoveClient(name string) error {
 	delete(s.Clients, name)
 	delete(s.clientsByID, client.Id)
 	s.ClientSeq.Release(client.Id)
+	client.mu.Lock()
+	cancel, done := client.udpCancel, client.udpDone
+	client.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
+	}
 	return nil
 }
 
