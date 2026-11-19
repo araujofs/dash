@@ -14,6 +14,7 @@ const (
 	PING
 	SEND
 	FORWARDING
+	IDENTIFY
 )
 
 func NewOperation(value uint8) (Operation, error) {
@@ -36,6 +37,8 @@ func NewOperation(value uint8) (Operation, error) {
 		return SEND, nil
 	case 8:
 		return FORWARDING, nil
+	case 9:
+		return IDENTIFY, nil
 	default:
 		return 0, fmt.Errorf("invalid operation: %d", value)
 	}
