@@ -22,6 +22,7 @@ type Client struct {
 	messageReady chan struct{}
 	udpCancel    context.CancelFunc
 	udpDone      chan struct{}
+	server       *Server
 }
 
 // enqueueMessage adds a message and wakes the client's sender without blocking.
@@ -71,10 +72,14 @@ func (c *Client) startUDPWorker(ctx context.Context, conn *net.UDPConn, workers 
 
 // HandleMessages drains the client's buffer and sends messages over UDP.
 func (c *Client) HandleMessages(ctx context.Context, conn *net.UDPConn) error {
-	if conn == nil || c.UdpAddr == nil {
+	if conn == nil {
 		return fmt.Errorf("conexão ou endereço UDP ausente para cliente %s", c.Name)
 	}
 	c.mu.Lock()
+	if c.UdpAddr == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("endereço UDP ausente para cliente %s", c.Name)
+	}
 	if c.Buffer == nil {
 		c.Buffer = &buffer.Buffer[message.DataMessage]{}
 	}
@@ -99,7 +104,16 @@ func (c *Client) HandleMessages(ctx context.Context, conn *net.UDPConn) error {
 			}
 			continue
 		}
-		if _, err := conn.WriteToUDP(item.Value().Encode(), c.UdpAddr); err != nil {
+		c.mu.Lock()
+		addr, server := c.UdpAddr, c.server
+		c.mu.Unlock()
+		if server != nil && !server.ownsTopicID(item.Value().Topic) {
+			continue
+		}
+		if addr == nil {
+			continue
+		}
+		if _, err := conn.WriteToUDP(item.Value().Encode(), addr); err != nil {
 			return fmt.Errorf("enviar mensagem para cliente %s: %w", c.Name, err)
 		}
 	}

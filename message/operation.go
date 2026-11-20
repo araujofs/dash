@@ -15,6 +15,7 @@ const (
 	SEND
 	FORWARDING
 	IDENTIFY
+	REGISTER_UDP
 )
 
 func NewOperation(value uint8) (Operation, error) {
@@ -39,6 +40,8 @@ func NewOperation(value uint8) (Operation, error) {
 		return FORWARDING, nil
 	case 9:
 		return IDENTIFY, nil
+	case 10:
+		return REGISTER_UDP, nil
 	default:
 		return 0, fmt.Errorf("invalid operation: %d", value)
 	}

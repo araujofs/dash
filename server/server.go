@@ -32,6 +32,7 @@ type Server struct {
 	metadata        *MetadataStore
 	rpcState        *brokerRuntime
 	rpcRunning      bool
+	tcpRunning      bool
 }
 
 // NewServer creates a server with a nonzero ID that must be unique in the cluster.
@@ -138,28 +139,45 @@ func (s *Server) AddClient(client *Client) error {
 		s.clientsByID = make(map[uint64]*Client)
 	}
 	client.Id = id
+	client.mu.Lock()
+	client.server = s
+	client.mu.Unlock()
 	s.Clients[client.Name] = client
 	s.clientsByID[id] = client
 	return nil
 }
 
 func (s *Server) RemoveClient(name string) error {
+	return s.removeClient(name, nil)
+}
+
+func (s *Server) removeClient(name string, expected *Client) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	client, exists := s.Clients[name]
-	if !exists {
+	if !exists || expected != nil && client != expected {
+		s.mu.Unlock()
 		return fmt.Errorf("cliente de nome %s não existe", name)
 	}
 
 	delete(s.Clients, name)
 	delete(s.clientsByID, client.Id)
 	s.ClientSeq.Release(client.Id)
+	for _, topic := range s.Topics {
+		topic.Clients = slices.DeleteFunc(topic.Clients, func(c *Client) bool { return c == client })
+		if topic.Owner == client {
+			topic.Owner = nil
+		}
+	}
+	s.mu.Unlock()
 	client.mu.Lock()
 	cancel, done := client.udpCancel, client.udpDone
 	client.mu.Unlock()
 	if cancel != nil {
 		cancel()
 		<-done
+	}
+	if client.TcpConn != nil {
+		client.TcpConn.Close()
 	}
 	return nil
 }
