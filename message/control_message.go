@@ -1,57 +1,107 @@
 package message
 
 import (
+	"dash/consts"
 	"encoding/binary"
-	// "errors"
-	// "dash/consts"
+	"errors"
+	"fmt"
+	"io"
 )
 
-// Ainda falta implementar o tamanho max para payload
-type ControlMessage struct{
+type ControlMessage struct {
 	Operation Operation
-	Topic uint16
-	Payload []byte // Debater sobre
+	Topic     uint16
+	Payload   []byte // Debater sobre
 }
 
+// ReadControlMessage reads one complete frame, including fragmented TCP reads.
+func ReadControlMessage(reader io.Reader) (*ControlMessage, error) {
+	prefix := make([]byte, consts.CONTROL_LENGTH_SIZE)
+	if _, err := io.ReadFull(reader, prefix); err != nil {
+		return nil, err
+	}
+	size := binary.BigEndian.Uint32(prefix)
+	if size < consts.CONTROL_HEADERS_SIZE || size > consts.CONTROL_HEADERS_SIZE+consts.MAX_CONTROL_PAYLOAD_SIZE {
+		return nil, fmt.Errorf("tamanho de controle inválido: %d", size)
+	}
+	frame := make([]byte, len(prefix)+int(size))
+	copy(frame, prefix)
+	if _, err := io.ReadFull(reader, frame[len(prefix):]); err != nil {
+		return nil, err
+	}
+	return DecodeControlMessage(frame)
+}
 
-func NewControlMessage(operation Operation, topic uint16, payload []byte) *ControlMessage{
+func WriteControlMessage(writer io.Writer, msg *ControlMessage) error {
+	data, err := msg.Encode()
+	if err != nil {
+		return err
+	}
+	for len(data) > 0 {
+		n, err := writer.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
+}
+
+func NewControlMessage(operation Operation, topic uint16, payload []byte) *ControlMessage {
 	return &ControlMessage{
 		Operation: operation,
-		Topic: topic,
-		Payload: payload,
+		Topic:     topic,
+		Payload:   payload,
 	}
 }
 
+// [Tamanho: 4 bytes][Operação: 1 byte][Tópico: 2 bytes][Payload: até 256 bytes]
+func (c ControlMessage) Encode() ([]byte, error) {
+	if len(c.Payload) > consts.MAX_CONTROL_PAYLOAD_SIZE {
+		return nil, fmt.Errorf("payload de controle excede %d bytes", consts.MAX_CONTROL_PAYLOAD_SIZE)
+	}
+	bodySize := consts.CONTROL_HEADERS_SIZE + len(c.Payload)
+	headersEnd := consts.CONTROL_LENGTH_SIZE + consts.CONTROL_HEADERS_SIZE
+	bytes := make([]byte, consts.CONTROL_LENGTH_SIZE+bodySize)
 
-// [Tamanho: 4 bytes][Operação: 1 byte][Tópico: 2 bytes][Payload: possivelmente 1017]
-func (c ControlMessage) Encode() []byte {
-	bodySize := 3 + len(c.Payload)
-	bytes := make([]byte, 4 + bodySize)
+	binary.BigEndian.PutUint32(bytes[:consts.CONTROL_LENGTH_SIZE], uint32(bodySize))
 
-	binary.BigEndian.PutUint32(bytes[0:4], uint32(bodySize))
+	bytes[consts.CONTROL_LENGTH_SIZE] = byte(c.Operation)
+	binary.BigEndian.PutUint16(bytes[consts.CONTROL_LENGTH_SIZE+1:headersEnd], c.Topic)
 
-	bytes[4] = byte(c.Operation)
-	binary.BigEndian.PutUint16(bytes[5:7], c.Topic)
+	copy(bytes[headersEnd:], c.Payload)
 
-	copy(bytes[7:], c.Payload)
-
-	return bytes
+	return bytes, nil
 }
-
 
 func DecodeControlMessage(bytes []byte) (*ControlMessage, error) {
 
-	// if len(bytes) < consts.HEADERS_SIZE{
-	// 	return nil, errors.New("")
-	// }
+	headersEnd := consts.CONTROL_LENGTH_SIZE + consts.CONTROL_HEADERS_SIZE
+	if len(bytes) < headersEnd {
+		return nil, errors.New("mensagem de controle incompleta")
+	}
+	if len(bytes) > consts.MAX_CONTROL_MESSAGE_SIZE {
+		return nil, fmt.Errorf("mensagem de controle excede %d bytes", consts.MAX_CONTROL_MESSAGE_SIZE)
+	}
 
-	operation, err := NewOperation(bytes[0])
+	bodySize := binary.BigEndian.Uint32(bytes[:consts.CONTROL_LENGTH_SIZE])
+	if bodySize > consts.MAX_CONTROL_MESSAGE_SIZE-consts.CONTROL_LENGTH_SIZE {
+		return nil, errors.New("tamanho declarado excede o limite da mensagem de controle")
+	}
+
+	if len(bytes)-consts.CONTROL_LENGTH_SIZE != int(bodySize) {
+		return nil, errors.New("valor declarado e real de tamanho não são iguais")
+	}
+
+	operation, err := NewOperation(bytes[consts.CONTROL_LENGTH_SIZE])
 	if err != nil {
 		return nil, err
 	}
-	
-	topic := binary.BigEndian.Uint16(bytes[1:3])
-	payload := bytes[3:]
 
-	return NewControlMessage(operation, topic, payload), nil
+	topic := binary.BigEndian.Uint16(bytes[consts.CONTROL_LENGTH_SIZE+1 : headersEnd])
+
+	return NewControlMessage(operation, topic, bytes[headersEnd:]), nil
 }

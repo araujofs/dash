@@ -1,0 +1,27 @@
+syntax = "proto3";
+package dash.message;
+
+// Wire contracts for GET_META/UPD_META. Each control payload is one RoutePage.
+message TopicRoute {
+  string logical_id = 1;
+  string name = 2;
+  uint32 broker_id = 3;
+  uint32 topic_id = 4;
+  string tcp_addr = 5;
+  string udp_addr = 6;
+  string owner_name = 7;
+  uint32 home_broker_id = 8;
+}
+message BrokerEndpoint { uint32 id = 1; string tcp_addr = 2; bool available = 3; }
+message RouteTable {
+  string version = 1;
+  repeated TopicRoute routes = 2;
+  repeated BrokerEndpoint brokers = 3;
+}
+message RoutePage {
+  string version = 1;
+  uint64 offset = 2;
+  bytes data = 3;
+  bool done = 4;
+  bool unchanged = 5;
+}
