@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"dash/consts"
 	"dash/message"
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -95,11 +97,11 @@ func TestListenUDPMultipleChannels(t *testing.T) {
 			for _, data := range [][]byte{
 				{}, {byte(message.SEND)}, {255, 0, 1},
 				{byte(message.SEND), 0, byte(topic.Id), 5, 'a'},
-				message.NewMessage(message.PING, topic.Id, publisherClient.Id, "", "control").Encode(),
-				message.NewMessage(message.FORWARDING, topic.Id, publisherClient.Id, "", "loop").Encode(),
-				message.NewMessage(message.SEND, topic.Id+1, publisherClient.Id, "", "unknown topic").Encode(),
-				message.NewMessage(message.SEND, topic.Id, 0, "publisher", "zero ID").Encode(),
-				message.NewMessage(message.SEND, topic.Id, ^uint64(0), "publisher", "unknown ID").Encode(),
+				message.NewMessage(message.PING, topic.Id, publisherClient.Id, "control").Encode(),
+				message.NewMessage(message.FORWARDING, topic.Id, publisherClient.Id, "loop").Encode(),
+				message.NewMessage(message.SEND, topic.Id+1, publisherClient.Id, "unknown topic").Encode(),
+				message.NewMessage(message.SEND, topic.Id, 0, "zero ID").Encode(),
+				message.NewMessage(message.SEND, topic.Id, ^uint64(0), "unknown ID").Encode(),
 			} {
 				if _, err := publisher.WriteToUDP(data, channel.udpAddr); err != nil {
 					t.Error(err)
@@ -107,11 +109,7 @@ func TestListenUDPMultipleChannels(t *testing.T) {
 				}
 			}
 			for i := range perChannel {
-				name := ""
-				if i%2 == 1 {
-					name = "forged-name"
-				}
-				msg := message.NewMessage(message.SEND, topic.Id, publisherClient.Id, name, fmt.Sprintf("channel-%d/message-%d", index, i))
+				msg := message.NewMessage(message.SEND, topic.Id, publisherClient.Id, fmt.Sprintf("channel-%d/message-%d", index, i))
 				socket := publisher
 				if i%2 == 1 {
 					socket = alternatePublisher
@@ -130,7 +128,7 @@ func TestListenUDPMultipleChannels(t *testing.T) {
 		}
 		seen := make(map[string]bool)
 		for range len(s.UdpConfig) * perChannel {
-			data := make([]byte, 2048)
+			data := make([]byte, consts.MAX_DATA_MESSAGE_SIZE)
 			n, _, err := recipient.ReadFromUDP(data)
 			if err != nil {
 				t.Fatal(err)
@@ -161,6 +159,53 @@ func TestListenUDPMultipleChannels(t *testing.T) {
 	clients[0].mu.Unlock()
 	if running {
 		t.Fatal("removed client's UDP worker is still running")
+	}
+}
+
+func TestListenUDPFullPayload(t *testing.T) {
+	s := udpServer(t)
+	publisher := udpSocket(t)
+	recipient := udpSocket(t)
+	sender := &Client{Name: strings.Repeat("n", 255)}
+	subscriber := &Client{Name: "subscriber", UdpAddr: recipient.LocalAddr().(*net.UDPAddr)}
+	for _, client := range []*Client{sender, subscriber} {
+		if err := s.AddClient(client); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AddTopic("full", sender); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddClientToTopic("full", subscriber.Name); err != nil {
+		t.Fatal(err)
+	}
+	startUDP(t, s)
+	payload := strings.Repeat("x", 2048)
+	msg := message.NewMessage(message.SEND, s.Topics["full"].Id, sender.Id, payload)
+	packet := msg.Encode()
+	if len(packet) != 2059 {
+		t.Fatalf("SEND size = %d, want 2059", len(packet))
+	}
+	if _, err := publisher.WriteToUDP(packet, s.UdpConfig[0].udpAddr); err != nil {
+		t.Fatal(err)
+	}
+	if err := recipient.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, consts.MAX_DATA_MESSAGE_SIZE)
+	n, _, err := recipient.ReadFromUDP(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2315 {
+		t.Fatalf("FORWARDING size = %d, want 2315", n)
+	}
+	forwarded, err := message.DecodeDataMessage(data[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forwarded.Operation != message.FORWARDING || forwarded.ClientID != sender.Id || forwarded.Topic != msg.Topic || forwarded.Name != sender.Name || forwarded.Payload != payload {
+		t.Fatal("forwarding changed the full payload or publisher metadata")
 	}
 }
 

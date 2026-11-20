@@ -11,16 +11,15 @@ type DataMessage struct {
 	Operation Operation
 	Topic     uint16
 	ClientID  uint64
-	Name      string
+	Name      string // Only carried by FORWARDING; populated from the server's client registry.
 	Payload   string
 }
 
-func NewMessage(operation Operation, topic uint16, clientID uint64, name, payload string) *DataMessage {
+func NewMessage(operation Operation, topic uint16, clientID uint64, payload string) *DataMessage {
 	return &DataMessage{
 		Operation: operation,
 		Topic:     topic,
 		ClientID:  clientID,
-		Name:      name,
 		Payload:   payload,
 	}
 }
@@ -37,27 +36,44 @@ func DecodeDataMessage(bytes []byte) (*DataMessage, error) {
 	topic := binary.BigEndian.Uint16(bytes[1:3])
 	clientID := binary.BigEndian.Uint64(bytes[3:11])
 
-	nameEnd := consts.HEADERS_SIZE + int(bytes[11])
-	if len(bytes) < nameEnd {
-		return nil, fmt.Errorf("nome do cliente incompleto na mensagem de dados")
+	payloadStart := consts.HEADERS_SIZE
+	name := ""
+	if operation == FORWARDING {
+		if len(bytes) < consts.FORWARDING_HEADERS_SIZE {
+			return nil, fmt.Errorf("cabeçalho de encaminhamento incompleto")
+		}
+		payloadStart = consts.FORWARDING_HEADERS_SIZE + int(bytes[consts.HEADERS_SIZE])
+		if len(bytes) < payloadStart {
+			return nil, fmt.Errorf("nome do cliente incompleto na mensagem de encaminhamento")
+		}
+		name = string(bytes[consts.FORWARDING_HEADERS_SIZE:payloadStart])
 	}
-	return NewMessage(operation, topic, clientID, string(bytes[consts.HEADERS_SIZE:nameEnd]), string(bytes[nameEnd:])), nil
+	payloadEnd := min(len(bytes), payloadStart+consts.MAX_DATA_PAYLOAD_SIZE)
+	msg := NewMessage(operation, topic, clientID, string(bytes[payloadStart:payloadEnd]))
+	msg.Name = name
+	return msg, nil
 }
 
 func (d DataMessage) Encode() []byte {
-	nameSize := min(len(d.Name), consts.MAX_CLIENT_NAME_SIZE)
-	payloadSize := min(len(d.Payload), consts.MAX_DATA_PAYLOAD_SIZE-nameSize)
-	nameEnd := consts.HEADERS_SIZE + nameSize
-	bytes := make([]byte, nameEnd+payloadSize)
+	headersSize := consts.HEADERS_SIZE
+	nameSize := 0
+	if d.Operation == FORWARDING {
+		nameSize = min(len(d.Name), consts.MAX_CLIENT_NAME_SIZE)
+		headersSize = consts.FORWARDING_HEADERS_SIZE + nameSize
+	}
+	payloadSize := min(len(d.Payload), consts.MAX_DATA_PAYLOAD_SIZE)
+	bytes := make([]byte, headersSize+payloadSize)
 
 	bytes[0] = byte(d.Operation)
 	binary.BigEndian.PutUint16(bytes[1:3], d.Topic)
 	binary.BigEndian.PutUint64(bytes[3:11], d.ClientID)
-	bytes[11] = byte(nameSize)
-	copy(bytes[consts.HEADERS_SIZE:nameEnd], d.Name)
+	if d.Operation == FORWARDING {
+		bytes[consts.HEADERS_SIZE] = byte(nameSize)
+		copy(bytes[consts.FORWARDING_HEADERS_SIZE:headersSize], d.Name)
+	}
 
 	// capa no limite do slice bytes, já trunca
-	copy(bytes[nameEnd:], d.Payload)
+	copy(bytes[headersSize:], d.Payload)
 
 	return bytes
 }

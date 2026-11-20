@@ -3,6 +3,7 @@ package server
 import (
 	"dash/consts"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,19 @@ func TestClientManagementEmptyServer(t *testing.T) {
 	}
 	if len(s.Clients) != 0 || s.ClientSeq != nil {
 		t.Fatal("failed operations changed registered clients")
+	}
+}
+
+func TestClientNameFitsDataHeader(t *testing.T) {
+	s := &Server{}
+	if err := s.AddClient(&Client{Name: strings.Repeat("a", 255)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddClient(&Client{Name: strings.Repeat("b", 256)}); err == nil {
+		t.Fatal("expected an error for a name exceeding the one-byte UDP name length")
+	}
+	if len(s.Clients) != 1 || s.ClientSeq.current != 1 {
+		t.Fatal("rejected name changed registered clients or sequence")
 	}
 }
 
