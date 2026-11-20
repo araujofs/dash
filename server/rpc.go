@@ -19,14 +19,16 @@ type PeerConfig struct {
 }
 
 type RPCConfig struct {
-	ListenAddr    string
-	AdvertiseAddr string
-	Peers         []PeerConfig
-	SyncInterval  time.Duration
-	Timeout       time.Duration
-	HistoryEvents int
-	HistoryBytes  int
-	SnapshotTTL   time.Duration
+	ListenAddr       string
+	AdvertiseAddr    string
+	Peers            []PeerConfig
+	SyncInterval     time.Duration
+	Timeout          time.Duration
+	HistoryEvents    int
+	HistoryBytes     int
+	SnapshotTTL      time.Duration
+	FailoverAfter    time.Duration
+	FailoverInterval time.Duration
 }
 
 type BrokerStatus struct {
@@ -111,6 +113,7 @@ type brokerRuntime struct {
 	mu          sync.Mutex
 	connections map[net.Conn]struct{}
 	snapshots   map[uint16]*snapshotSession
+	started     time.Time
 	cancel      context.CancelFunc
 }
 
@@ -158,6 +161,10 @@ func (b *BrokerRPC) ApplyChanges(req ApplyChangesRequest, reply *MetadataAck) er
 	}
 	if err == nil && !reply.NeedSnapshot {
 		p.status(true, req.Chunk.Done && !req.Chunk.More)
+		if req.Chunk.Done {
+			metadata, _ := p.replica.Snapshot()
+			b.runtime.server.rememberMetadata(metadata)
+		}
 	}
 	return err
 }
@@ -280,13 +287,19 @@ func normalizeRPCConfig(id uint16, config RPCConfig) (RPCConfig, error) {
 	if config.SnapshotTTL == 0 {
 		config.SnapshotTTL = 60 * time.Second
 	}
+	if config.FailoverAfter == 0 {
+		config.FailoverAfter = 3 * config.SyncInterval
+	}
+	if config.FailoverInterval == 0 {
+		config.FailoverInterval = min(config.SyncInterval, time.Second)
+	}
 	if config.HistoryEvents == 0 {
 		config.HistoryEvents = 4096
 	}
 	if config.HistoryBytes == 0 {
 		config.HistoryBytes = 4 * 1024 * 1024
 	}
-	if config.SyncInterval < 0 || config.Timeout < 0 || config.SnapshotTTL < 0 || config.HistoryEvents < 0 || config.HistoryBytes < 0 {
+	if config.SyncInterval < 0 || config.Timeout < 0 || config.SnapshotTTL < 0 || config.HistoryEvents < 0 || config.HistoryBytes < 0 || config.FailoverAfter < 0 || config.FailoverInterval < 0 {
 		return config, fmt.Errorf("limites RPC devem ser positivos")
 	}
 	config.Peers = slices.Clone(config.Peers)
@@ -372,6 +385,7 @@ func (s *Server) serveRPC(ctx context.Context, listener net.Listener, config RPC
 	broker.RPCAddr = address
 	store.UpdateBroker(broker)
 	r := &brokerRuntime{server: s, store: store, config: config, address: address, peers: make(map[uint16]*rpcPeer), connections: make(map[net.Conn]struct{}), snapshots: make(map[uint16]*snapshotSession)}
+	r.started = time.Now()
 	r.cancel = cancel
 	for _, cfg := range config.Peers {
 		r.peers[cfg.ID] = &rpcPeer{config: cfg, replica: NewMetadataReplica(cfg.ID), wake: make(chan struct{}, 1)}
@@ -407,6 +421,20 @@ func (s *Server) serveRPC(ctx context.Context, listener net.Listener, config RPC
 		workers.Add(1)
 		go func(peer *rpcPeer) { defer workers.Done(); r.syncPeer(runCtx, peer) }(peer)
 	}
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		ticker := time.NewTicker(config.FailoverInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				r.reconcileTopics()
+			}
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
@@ -510,6 +538,8 @@ func (r *brokerRuntime) syncRound(ctx context.Context, peer *rpcPeer) error {
 		return err
 	}
 	peer.status(true, true)
+	remote, _ := peer.replica.Snapshot()
+	r.server.rememberMetadata(remote)
 	// Ping reports how much of our journal the recipient has already installed.
 	cursor, through, offset := identity.Received, uint64(0), 0
 	for ctx.Err() == nil {

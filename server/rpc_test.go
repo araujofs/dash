@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/rpc"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -173,7 +174,11 @@ func TestBrokerRPCFailureAndRestart(t *testing.T) {
 	startRPC(t, restarted, newListener, []PeerConfig{{ID: 1, RPCAddr: aAddr}}, 20*time.Millisecond)
 	awaitRPC(t, func() bool {
 		state := remoteStatus(a, 2)
-		return state.Synced && state.Cursor.Generation != oldGeneration && len(state.Metadata.Topics) == 1 && state.Metadata.Topics[0].Name == "fresh"
+		// The restarted home now restores its old logical topic from surviving
+		// directories as well as advertising the freshly created local topic.
+		return state.Synced && state.Cursor.Generation != oldGeneration && len(state.Metadata.Topics) == 2 &&
+			slices.ContainsFunc(state.Metadata.Topics, func(topic TopicMetadata) bool { return topic.Name == "fresh" }) &&
+			slices.ContainsFunc(state.Metadata.Topics, func(topic TopicMetadata) bool { return topic.Name == "old" })
 	})
 	awaitRPC(t, func() bool { return len(remoteStatus(restarted, 1).Metadata.Topics) == 1 })
 }
