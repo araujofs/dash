@@ -16,18 +16,22 @@ type UdpInfo struct {
 }
 
 type Server struct {
-	Id           uint16
-	Clients      map[string]*Client
-	clientsByID  map[uint64]*Client
-	Topics       map[string]*Topic
-	topicsByID   map[uint16]*Topic
-	TcpAddr      *net.TCPAddr
-	TcpListener  *net.TCPListener
-	TopicSeq     *IDSequence[uint16]
-	ClientSeq    *IDSequence[uint64]
-	UdpConfig    []*UdpInfo
-	mu           sync.RWMutex
-	udpListening bool
+	Id              uint16
+	Clients         map[string]*Client
+	clientsByID     map[uint64]*Client
+	Topics          map[string]*Topic
+	topicsByID      map[uint16]*Topic
+	topicsByLogical map[string]*Topic
+	TcpAddr         *net.TCPAddr
+	TcpListener     *net.TCPListener
+	TopicSeq        *IDSequence[uint16]
+	ClientSeq       *IDSequence[uint64]
+	UdpConfig       []*UdpInfo
+	mu              sync.RWMutex
+	udpListening    bool
+	metadata        *MetadataStore
+	rpcState        *brokerRuntime
+	rpcRunning      bool
 }
 
 // NewServer creates a server with a nonzero ID that must be unique in the cluster.
@@ -37,6 +41,16 @@ func NewServer(id uint16, tcpPort int) (*Server, error) {
 	}
 
 	udpConfig := [consts.UDP_PORTS]*UdpInfo{}
+	ready := false
+	defer func() {
+		if !ready {
+			for _, channel := range udpConfig {
+				if channel != nil {
+					channel.udpConn.Close()
+				}
+			}
+		}
+	}()
 	loopback := "127.0.0.1"
 
 	for i := range consts.UDP_PORTS {
@@ -75,17 +89,19 @@ func NewServer(id uint16, tcpPort int) (*Server, error) {
 		tcpAddr.Port = port
 	}
 
+	ready = true
 	return &Server{
-		Id:          id,
-		UdpConfig:   udpConfig[:],
-		TcpAddr:     tcpAddr,
-		TcpListener: tcpLis,
-		Clients:     map[string]*Client{},
-		clientsByID: map[uint64]*Client{},
-		Topics:      map[string]*Topic{},
-		topicsByID:  map[uint16]*Topic{},
-		TopicSeq:    NewIDSequence(uint16(consts.MAX_TOPICS - 1)),
-		ClientSeq:   NewIDSequence(^uint64(0)),
+		Id:              id,
+		UdpConfig:       udpConfig[:],
+		TcpAddr:         tcpAddr,
+		TcpListener:     tcpLis,
+		Clients:         map[string]*Client{},
+		clientsByID:     map[uint64]*Client{},
+		Topics:          map[string]*Topic{},
+		topicsByID:      map[uint16]*Topic{},
+		topicsByLogical: map[string]*Topic{},
+		TopicSeq:        NewIDSequence(uint16(consts.MAX_TOPICS - 1)),
+		ClientSeq:       NewIDSequence(^uint64(0)),
 	}, nil
 }
 
@@ -170,9 +186,17 @@ func (s *Server) AddTopic(name string, client *Client) error {
 	if s.topicsByID == nil {
 		s.topicsByID = make(map[uint16]*Topic)
 	}
+	metadata := s.metadataLocked()
 	topic := newTopic(id, name, client)
+	topic.HomeBrokerID = s.Id
+	if s.topicsByLogical == nil {
+		s.topicsByLogical = make(map[string]*Topic)
+	}
+	s.topicsByLogical[topic.LogicalID] = topic
 	s.Topics[name] = topic
 	s.topicsByID[id] = topic
+	metadata.UpsertTopic(topic.metadata())
+	s.notifyMetadataLocked()
 	return nil
 }
 
@@ -184,13 +208,20 @@ func (s *Server) RemoveTopic(name string, client *Client) error {
 		return fmt.Errorf("tópico de nome %s não existe", name)
 	}
 
-	if client != toRemove.Owner {
+	if client != toRemove.Owner && (client == nil || client.Name != toRemove.OwnerName) {
+		if client == nil {
+			return fmt.Errorf("cliente não informado")
+		}
 		return fmt.Errorf("tópico de nome %s não pertence ao cliente %s", name, client.Name)
 	}
 
+	metadata := s.metadataLocked()
 	delete(s.Topics, name)
 	delete(s.topicsByID, toRemove.Id)
+	delete(s.topicsByLogical, toRemove.LogicalID)
 	s.TopicSeq.Release(toRemove.Id)
+	metadata.RemoveTopic(toRemove.Id)
+	s.notifyMetadataLocked()
 	return nil
 }
 
